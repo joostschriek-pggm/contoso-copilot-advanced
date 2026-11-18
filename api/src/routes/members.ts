@@ -1,5 +1,5 @@
 import type { Router } from '../http/router.ts';
-import { badRequest, notFound } from '../http/errors.ts';
+import { badRequest, notFound, unprocessable } from '../http/errors.ts';
 import type { MemberRepository } from '../repositories/memberRepository.ts';
 import type { ContributionRepository } from '../repositories/contributionRepository.ts';
 import type { StatementService } from '../services/statementService.ts';
@@ -40,6 +40,11 @@ export function registerMemberRoutes(router: Router, deps: MemberRouteDeps): voi
     if (!member) throw notFound(`Member ${params.id}`);
     const asOf = query.get('asOf') ?? deps.today();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) throw badRequest('asOf must be an ISO date (YYYY-MM-DD)');
-    return { body: deps.statements.build(member, asOf) };
+    try {
+      return { body: deps.statements.build(member, asOf) };
+    } catch (err) {
+      if (err instanceof RangeError) throw unprocessable(err.message);
+      throw err;
+    }
   });
 }

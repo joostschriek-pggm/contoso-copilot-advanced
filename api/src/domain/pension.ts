@@ -75,27 +75,40 @@ export interface ProjectionResult {
   yearsToRetirement: number;
   accruedToDate: number;
   futureAccrual: number;
+  /** Fraction (0–0.52) by which the pension is reduced for early retirement (R5). */
+  earlyRetirementReduction: number;
+  /** Yearly pension before the early-retirement reduction. */
+  unreducedAnnualPension: number;
   projectedAnnualPension: number;
   scheme: string;
 }
 
+/** R5: reduction fraction = 6.5 % × (68 − age), rounded to 3 decimals. */
+export function earlyRetirementReduction(age: number, scheme: SchemeParameters = SCHEME_2026): number {
+  const reduction = scheme.earlyRetirementReductionPerYear * (scheme.retirementAge - age);
+  return Math.round(reduction * 1000) / 1000;
+}
+
 /**
- * Projects the yearly pension at the STANDARD retirement age.
+ * Projects the yearly pension at a retirement age between 60 and 68 (R5).
  * Assumes the member keeps working with the same part-time factor until retirement.
- *
- * NOTE: early retirement is not supported yet (backlog item "early retirement scenario").
  */
 export function projectPension(input: ProjectionInput, scheme: SchemeParameters = SCHEME_2026): ProjectionResult {
   const retirementAge = input.retirementAge ?? scheme.retirementAge;
-  if (retirementAge !== scheme.retirementAge) {
-    throw new RangeError(`retirementAge must be ${scheme.retirementAge} (early retirement is not supported yet)`);
+  const currentAge = ageOn(input.birthDate, input.asOf);
+  if (retirementAge < scheme.earlyRetirementMinAge || retirementAge > scheme.retirementAge) {
+    throw new RangeError(
+      `retirementAge must be between ${scheme.earlyRetirementMinAge} and ${scheme.retirementAge}`,
+    );
+  }
+  if (retirementAge < currentAge) {
+    throw new RangeError(`retirementAge must not be below the member's current age (${currentAge})`);
   }
   const growth = input.salaryGrowthRate ?? 0;
   if (!Number.isFinite(growth) || growth < 0 || growth > 0.1) {
     throw new RangeError('salaryGrowthRate must be between 0 and 0.1');
   }
-  const currentAge = ageOn(input.birthDate, input.asOf);
-  const yearsToRetirement = Math.max(0, retirementAge - currentAge);
+  const yearsToRetirement = retirementAge - currentAge;
 
   let futureAccrual = 0;
   let salary = input.fullTimeSalary;
@@ -105,13 +118,18 @@ export function projectPension(input: ProjectionInput, scheme: SchemeParameters 
   }
   futureAccrual = roundMoney(futureAccrual);
 
+  const reduction = earlyRetirementReduction(retirementAge, scheme);
+  const unreduced = roundMoney(input.accruedToDate + futureAccrual);
+
   return {
     retirementAge,
     retirementDate: dateAtAge(input.birthDate, retirementAge),
     yearsToRetirement,
     accruedToDate: roundMoney(input.accruedToDate),
     futureAccrual,
-    projectedAnnualPension: roundMoney(input.accruedToDate + futureAccrual),
+    earlyRetirementReduction: reduction,
+    unreducedAnnualPension: unreduced,
+    projectedAnnualPension: roundMoney(unreduced * (1 - reduction)),
     scheme: scheme.id,
   };
 }
